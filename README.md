@@ -13,14 +13,6 @@ Proxy is a high performance HTTP, HTTPS, HTTPS, websocket, TCP, UDP, Socks5, ss 
 
 **[Full platform SDK](https://github.com/snail007/goproxy-sdk/blob/master/README.md)**
 
-**[GoProxy special authorization](/AUTHORIZATION.md)**
-
-### How to contribute to the code (Pull Request)?  
-
-Pull Request is welcomed.   
-First, you need to clone the project to your account, and then modify the code on the dev branch.   
-Finally, Pull Request to dev branch of goproxy project, and contribute code for efficiency.   
-PR needs to explain what changes have been made and why you change them.  
 
 ### Features  
 - chain-style proxy: the program itself can be a primary proxy, and if a parent proxy is set, it can be used as a second level proxy or even a N level proxy.  
