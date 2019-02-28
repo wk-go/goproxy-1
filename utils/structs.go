@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snail007/goproxy/utils/dnsx"
-	"github.com/snail007/goproxy/utils/mapx"
-	"github.com/snail007/goproxy/utils/sni"
+	"github.com/snail007/proxy/utils/dnsx"
+	"github.com/snail007/proxy/utils/mapx"
+	"github.com/snail007/proxy/utils/sni"
 
 	"github.com/golang/snappy"
 )

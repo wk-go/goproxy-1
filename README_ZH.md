@@ -21,6 +21,12 @@ Proxy是golang实现的高性能http,https,websocket,tcp,udp,socks5,ss代理服�
 然后在dev分支上面修改代码,最后发Pull Request到goproxy项目的dev分支即可,  
 为了高效贡献代码,pr的时候需要说明做了什么变更,原因是什么.  
 
+### 源代码申明
+
+本项目作者发现大量的开发者基于本项目进行二次开发或使用大量本项目核心代码而不遵循GPLv3协议,这严重违背了本项目使用GPLv3开源协议的初衷,鉴于这种情况,本项目采取源代码延迟发布策略,在一定程度上遏制这些不尊重开源,不尊重他人劳动成果的行为.
+本项目会持续更新迭代,持续发布全平台的二进制程序,给大家提供强大便捷的代理工具.
+如果你有定制,商业需求请发邮件至`arraykeys@gmail.com`
+
 ### Features  
 - 链式代理,程序本身可以作为一级代理,如果设置了上级代理那么可以作为二级代理,乃至N级代理.  
 - 通讯加密,如果程序不是一级代理,而且上级代理也是本程序,那么可以加密和上级代理之间的通讯,采用底层tls高强度加密,安全无特征.  
@@ -56,7 +62,7 @@ Proxy是golang实现的高性能http,https,websocket,tcp,udp,socks5,ss代理服�
 - ...  
 
  
-本页是v5.4手册,其他版本手册请点击[这里](docs/old-release-zh.md)查看. 
+本页手册适用于最新版goproxy,其他版本可能有的地方不再适用,请自己根据命令帮助使用. 
  
 
 ### 怎么找到组织?  
@@ -1369,18 +1375,8 @@ fast3：`--nodelay=1 --interval=10 --resend=2 --nc=1`
 那么本地的UDP端口53就提供了安全防污染DNS解析功能。
 
 ### TODO  
-- http,socks代理多个上级负载均衡?
 - http(s)代理增加pac支持?
 - 欢迎加群反馈...
-
-### 如何使用源码?   
-建议go1.10.1.       
-`go get github.com/snail007/goproxy`   
-cd进入你的go src目录  
-cd进入`github.com/snail007/goproxy`即可.    
-编译直接:`go build -o proxy`        
-运行: `go run *.go`       
-utils是工具包,service是具体的每个服务类. 
 
 ### License  
 Proxy is licensed under GPLv3 license.  

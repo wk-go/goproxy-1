@@ -56,7 +56,7 @@ PR needs to explain what changes have been made and why you change them.
 - ...  
 
  
-This page is the v6.0 manual, and the other version of the manual can be checked by the following [link](docs/old-release.md).  
+This page is manual of the lastest version of goproxy , you can read detail of command `proxy help` getting how to using the other version goproxy.  
 
 
 ### How to find the organization?  
