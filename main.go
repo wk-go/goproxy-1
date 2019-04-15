@@ -11,7 +11,7 @@ import (
 	"github.com/snail007/proxy/services"
 )
 
-var APP_VERSION = "No Version Provided"
+var APP_VERSION = "7.2"
 
 func main() {
 	err := initConfig()
