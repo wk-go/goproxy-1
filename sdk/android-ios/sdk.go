@@ -1,24 +1,20 @@
-package main
+package proxy
 
 import (
-	"bufio"
 	"crypto/sha1"
 	"fmt"
 	"io/ioutil"
 	logger "log"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime/debug"
 	"runtime/pprof"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/snail007/proxy/core/lib/kcpcfg"
 	encryptconn "github.com/snail007/proxy/core/lib/transport/encrypt"
-	sdk "github.com/snail007/proxy/sdk/android-ios"
-	services "github.com/snail007/proxy/services"
+	"github.com/snail007/proxy/services"
 	httpx "github.com/snail007/proxy/services/http"
 	keygenx "github.com/snail007/proxy/services/keygen"
 	mux "github.com/snail007/proxy/services/mux"
@@ -27,22 +23,51 @@ import (
 	tcpx "github.com/snail007/proxy/services/tcp"
 	tunnelx "github.com/snail007/proxy/services/tunnel"
 	udpx "github.com/snail007/proxy/services/udp"
-	kcp "github.com/xtaci/kcp-go"
 
+	kcp "github.com/xtaci/kcp-go"
 	"golang.org/x/crypto/pbkdf2"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
+var SDK_VERSION = "No Version Provided"
+
 var (
-	app     *kingpin.Application
-	service *services.ServiceItem
-	cmd     *exec.Cmd
+	app *kingpin.Application
 	cpuProfilingFile, memProfilingFile, blockProfilingFile,
 	goroutineProfilingFile, threadcreateProfilingFile *os.File
-	isDebug *bool
+	isProfiling   bool
+	profilingLock = &sync.Mutex{}
 )
 
-func initConfig() (err error) {
+type LogCallback interface {
+	Write(line string)
+}
+type logCallback interface {
+	Write(line string)
+}
+type logWriter struct {
+	callback LogCallback
+}
+
+func (s *logWriter) Write(p []byte) (n int, err error) {
+	s.callback.Write(string(p))
+	return
+}
+
+func Start(serviceID, serviceArgsStr string) (errStr string) {
+	return StartWithLog(serviceID, serviceArgsStr, nil)
+}
+
+//Start
+//serviceID : is service identify id,different service's id should be difference
+//serviceArgsStr: is the whole command line args string
+//such as :
+//1."http -t tcp -p :8989"
+//2."socks -t tcp -p :8989"
+//and so on.
+//if an error occured , errStr will be the error reason
+//if start success, errStr is empty.
+func StartWithLog(serviceID, serviceArgsStr string, loggerCallback LogCallback) (errStr string) {
 	//define  args
 	tcpArgs := tcpx.TCPArgs{}
 	httpArgs := httpx.HTTPArgs{}
@@ -55,21 +80,19 @@ func initConfig() (err error) {
 	udpArgs := udpx.UDPArgs{}
 	socksArgs := socksx.SocksArgs{}
 	spsArgs := spsx.SPSArgs{}
-	dnsArgs := sdk.DNSArgs{}
+	dnsArgs := DNSArgs{}
 	keygenArgs := keygenx.KeygenArgs{}
 	kcpArgs := kcpcfg.KCPConfigArgs{}
 	//build srvice args
 	app = kingpin.New("proxy", "happy with proxy")
-	app.Author("snail").Version(APP_VERSION)
-	isDebug = app.Flag("debug", "debug log output").Default("false").Bool()
-	daemon := app.Flag("daemon", "run proxy in background").Default("false").Bool()
-	forever := app.Flag("forever", "run proxy in forever,fail and retry").Default("false").Bool()
+	app.Author("snail").Version(SDK_VERSION)
+	debug := app.Flag("debug", "debug log output").Default("false").Bool()
 	logfile := app.Flag("log", "log file path").Default("").String()
 	nolog := app.Flag("nolog", "turn off logging").Default("false").Bool()
 	kcpArgs.Key = app.Flag("kcp-key", "pre-shared secret between client and server").Default("secrect").String()
 	kcpArgs.Crypt = app.Flag("kcp-method", "encrypt/decrypt method, can be: aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none").Default("aes").Enum("aes", "aes-128", "aes-192", "salsa20", "blowfish", "twofish", "cast5", "3des", "tea", "xtea", "xor", "sm4", "none")
-	kcpArgs.Mode = app.Flag("kcp-mode", "profiles: fast3, fast2, fast, normal, manual").Default("fast").Enum("fast3", "fast2", "fast", "normal", "manual")
-	kcpArgs.MTU = app.Flag("kcp-mtu", "set maximum transmission unit for UDP packets").Default("450").Int()
+	kcpArgs.Mode = app.Flag("kcp-mode", "profiles: fast3, fast2, fast, normal, manual").Default("fast3").Enum("fast3", "fast2", "fast", "normal", "manual")
+	kcpArgs.MTU = app.Flag("kcp-mtu", "set maximum transmission unit for UDP packets").Default("1350").Int()
 	kcpArgs.SndWnd = app.Flag("kcp-sndwnd", "set send window size(num of packets)").Default("1024").Int()
 	kcpArgs.RcvWnd = app.Flag("kcp-rcvwnd", "set receive window size(num of packets)").Default("1024").Int()
 	kcpArgs.DataShard = app.Flag("kcp-ds", "set reed-solomon erasure coding - datashard").Default("10").Int()
@@ -126,7 +149,7 @@ func initConfig() (err error) {
 	httpArgs.RateLimit = http.Flag("rate-limit", "rate limit (bytes/second) of each connection, such as: 100K 1.5M . 0 means no limitation").Short('l').Default("0").String()
 	httpArgs.BindListen = http.Flag("bind-listen", "using listener binding IP when connect to target").Short('B').Default("false").Bool()
 	httpArgs.Jumper = http.Flag("jumper", "https or socks5 proxies used when connecting to parent, only worked of -T is tls or tcp, format is https://username:password@host:port https://host:port or socks5://username:password@host:port socks5://host:port").Short('J').Default("").String()
-	httpArgs.Debug = isDebug
+	httpArgs.Debug = debug
 	//########tcp#########
 	tcp := app.Command("tcp", "proxy on tcp mode")
 	tcpArgs.Parent = tcp.Flag("parent", "parent address, such as: \"23.32.32.19:28008\"").Default("").Short('P').String()
@@ -222,7 +245,7 @@ func initConfig() (err error) {
 	tunnelBridgeArgs.Timeout = tunnelBridge.Flag("timeout", "tcp timeout with milliseconds").Short('t').Default("2000").Int()
 	tunnelBridgeArgs.Local = tunnelBridge.Flag("local", "local ip:port to listen").Short('p').Default(":33080").String()
 
-	//########socks#########
+	//########ssh#########
 	socks := app.Command("socks", "proxy on ssh mode")
 	socksArgs.Parent = socks.Flag("parent", "parent ssh address, such as: \"23.32.32.19:22\"").Default("").Short('P').Strings()
 	socksArgs.ParentType = socks.Flag("parent-type", "parent protocol type <tls|tcp|kcp|ssh>").Default("tcp").Short('T').Enum("tls", "tcp", "kcp", "ssh")
@@ -262,9 +285,9 @@ func initConfig() (err error) {
 	socksArgs.LoadBalanceOnlyHA = socks.Flag("lb-onlyha", "use only `high availability mode` to choose parent for LB").Default("false").Bool()
 	socksArgs.RateLimit = socks.Flag("rate-limit", "rate limit (bytes/second) of each connection, such as: 100K 1.5M . 0 means no limitation").Short('l').Default("0").String()
 	socksArgs.BindListen = socks.Flag("bind-listen", "using listener binding IP when connect to target").Short('B').Default("false").Bool()
-	socksArgs.Debug = isDebug
+	socksArgs.Debug = debug
 
-	//########sps#########
+	//########socks+http(s)#########
 	sps := app.Command("sps", "proxy on socks+http(s) mode")
 	spsArgs.Parent = sps.Flag("parent", "parent address, such as: \"23.32.32.19:28008\"").Default("").Short('P').Strings()
 	spsArgs.CertFile = sps.Flag("cert", "cert file for tls").Short('C').Default("proxy.crt").String()
@@ -296,7 +319,7 @@ func initConfig() (err error) {
 	spsArgs.DisableHTTP = sps.Flag("disable-http", "disable http(s) proxy").Default("false").Bool()
 	spsArgs.DisableSocks5 = sps.Flag("disable-socks", "disable socks proxy").Default("false").Bool()
 	spsArgs.DisableSS = sps.Flag("disable-ss", "disable ss proxy").Default("false").Bool()
-	spsArgs.LoadBalanceMethod = sps.Flag("lb-method", "load balance method when use multiple parent,can be <roundrobin|leastconn|leasttime|hash|weight>").Default("roundrobin").Enum("roundrobin", "weight", "leastconn", "leasttime", "hash")
+	spsArgs.LoadBalanceMethod = sps.Flag("lb-method", "load balance method when use multiple parent,can be <roundrobin|leastconn|leasttime|hash|weight>").Default("hash").Enum("roundrobin", "weight", "leastconn", "leasttime", "hash")
 	spsArgs.LoadBalanceTimeout = sps.Flag("lb-timeout", "tcp milliseconds timeout of connecting to parent").Default("500").Int()
 	spsArgs.LoadBalanceRetryTime = sps.Flag("lb-retrytime", "sleep time milliseconds after checking").Default("1000").Int()
 	spsArgs.LoadBalanceHashTarget = sps.Flag("lb-hashtarget", "use target address to choose parent for LB").Default("false").Bool()
@@ -304,7 +327,7 @@ func initConfig() (err error) {
 	spsArgs.RateLimit = sps.Flag("rate-limit", "rate limit (bytes/second) of each connection, such as: 100K 1.5M . 0 means no limitation").Short('l').Default("0").String()
 	spsArgs.Jumper = sps.Flag("jumper", "https or socks5 proxies used when connecting to parent, only worked of -T is tls or tcp, format is https://username:password@host:port https://host:port or socks5://username:password@host:port socks5://host:port").Default("").String()
 	spsArgs.ParentTLSSingle = sps.Flag("parent-tls-single", "conntect to parent insecure skip verify").Default("false").Bool()
-	spsArgs.Debug = isDebug
+	spsArgs.Debug = debug
 
 	//########dns#########
 	dns := app.Command("dns", "proxy on dns server mode")
@@ -333,8 +356,15 @@ func initConfig() (err error) {
 	keygenArgs.Sign = keygen.Flag("sign", "cert is to signin").Short('s').Default("false").Bool()
 
 	//parse args
-	serviceName := kingpin.MustParse(app.Parse(os.Args[1:]))
-
+	_args := strings.Fields(strings.Trim(serviceArgsStr, " "))
+	args := []string{}
+	for _, a := range _args {
+		args = append(args, strings.Trim(a, "\""))
+	}
+	serviceName, err := app.Parse(args)
+	if err != nil {
+		return fmt.Sprintf("parse args fail,err: %s", err)
+	}
 	//set kcp config
 
 	switch *kcpArgs.Mode {
@@ -388,170 +418,107 @@ func initConfig() (err error) {
 	muxClientArgs.KCP = kcpArgs
 	dnsArgs.KCP = kcpArgs
 
-	log := logger.New(os.Stderr, "", logger.Ldate|logger.Ltime)
-
+	log := logger.New(os.Stdout, "", logger.Ldate|logger.Ltime)
 	flags := logger.Ldate
-	if *isDebug {
+	if *debug {
 		flags |= logger.Lshortfile | logger.Lmicroseconds
-		cpuProfilingFile, _ = os.Create("cpu.prof")
-		memProfilingFile, _ = os.Create("memory.prof")
-		blockProfilingFile, _ = os.Create("block.prof")
-		goroutineProfilingFile, _ = os.Create("goroutine.prof")
-		threadcreateProfilingFile, _ = os.Create("threadcreate.prof")
-		pprof.StartCPUProfile(cpuProfilingFile)
 	} else {
 		flags |= logger.Ltime
 	}
 	log.SetFlags(flags)
-	if *nolog {
-		log.SetOutput(ioutil.Discard)
-	} else if *logfile != "" {
-		f, e := os.OpenFile(*logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-		if e != nil {
-			log.Fatal(e)
-		}
-		log.SetOutput(f)
-	}
-	if *daemon {
-		args := []string{}
-		for _, arg := range os.Args[1:] {
-			if arg != "--daemon" {
-				args = append(args, arg)
+
+	if loggerCallback == nil {
+		if *nolog {
+			log.SetOutput(ioutil.Discard)
+		} else if *logfile != "" {
+			f, e := os.OpenFile(*logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+			if e != nil {
+				log.Fatal(e)
 			}
+			log.SetOutput(f)
 		}
-		cmd = exec.Command(os.Args[0], args...)
-		cmd.Start()
-		f := ""
-		if *forever {
-			f = "forever "
-		}
-		log.Printf("%s%s [PID] %d running...\n", f, os.Args[0], cmd.Process.Pid)
-		os.Exit(0)
-	}
-	if *forever {
-		args := []string{}
-		for _, arg := range os.Args[1:] {
-			if arg != "--forever" {
-				args = append(args, arg)
-			}
-		}
-		go func() {
-			defer func() {
-				if e := recover(); e != nil {
-					fmt.Printf("crashed, err: %s\nstack:%s", e, string(debug.Stack()))
-				}
-			}()
-			for {
-				if cmd != nil {
-					cmd.Process.Kill()
-					time.Sleep(time.Second * 5)
-				}
-				cmd = exec.Command(os.Args[0], args...)
-				cmdReaderStderr, err := cmd.StderrPipe()
-				if err != nil {
-					log.Printf("ERR:%s,restarting...\n", err)
-					continue
-				}
-				cmdReader, err := cmd.StdoutPipe()
-				if err != nil {
-					log.Printf("ERR:%s,restarting...\n", err)
-					continue
-				}
-				scanner := bufio.NewScanner(cmdReader)
-				scannerStdErr := bufio.NewScanner(cmdReaderStderr)
-				go func() {
-					defer func() {
-						if e := recover(); e != nil {
-							fmt.Printf("crashed, err: %s\nstack:%s", e, string(debug.Stack()))
-						}
-					}()
-					for scanner.Scan() {
-						fmt.Println(scanner.Text())
-					}
-				}()
-				go func() {
-					defer func() {
-						if e := recover(); e != nil {
-							fmt.Printf("crashed, err: %s\nstack:%s", e, string(debug.Stack()))
-						}
-					}()
-					for scannerStdErr.Scan() {
-						fmt.Println(scannerStdErr.Text())
-					}
-				}()
-				if err := cmd.Start(); err != nil {
-					log.Printf("ERR:%s,restarting...\n", err)
-					continue
-				}
-				pid := cmd.Process.Pid
-				log.Printf("worker %s [PID] %d running...\n", os.Args[0], pid)
-				if err := cmd.Wait(); err != nil {
-					log.Printf("ERR:%s,restarting...", err)
-					continue
-				}
-				log.Printf("worker %s [PID] %d unexpected exited, restarting...\n", os.Args[0], pid)
-			}
-		}()
-		return
-	}
-	if *logfile == "" {
-		poster()
-		if *isDebug {
-			log.Println("[profiling] cpu profiling save to file : cpu.prof")
-			log.Println("[profiling] memory profiling save to file : memory.prof")
-			log.Println("[profiling] block profiling save to file : block.prof")
-			log.Println("[profiling] goroutine profiling save to file : goroutine.prof")
-			log.Println("[profiling] threadcreate profiling save to file : threadcreate.prof")
-		}
+	} else {
+		log.SetOutput(&logWriter{
+			callback: loggerCallback,
+		})
 	}
 
 	//regist services and run service
 	switch serviceName {
 	case "http":
-		services.Regist(serviceName, httpx.NewHTTP(), httpArgs, log)
+		services.Regist(serviceID, httpx.NewHTTP(), httpArgs, log)
 	case "tcp":
-		services.Regist(serviceName, tcpx.NewTCP(), tcpArgs, log)
+		services.Regist(serviceID, tcpx.NewTCP(), tcpArgs, log)
 	case "udp":
-		services.Regist(serviceName, udpx.NewUDP(), udpArgs, log)
+		services.Regist(serviceID, udpx.NewUDP(), udpArgs, log)
 	case "tserver":
-		services.Regist(serviceName, tunnelx.NewTunnelServerManager(), tunnelServerArgs, log)
+		services.Regist(serviceID, tunnelx.NewTunnelServerManager(), tunnelServerArgs, log)
 	case "tclient":
-		services.Regist(serviceName, tunnelx.NewTunnelClient(), tunnelClientArgs, log)
+		services.Regist(serviceID, tunnelx.NewTunnelClient(), tunnelClientArgs, log)
 	case "tbridge":
-		services.Regist(serviceName, tunnelx.NewTunnelBridge(), tunnelBridgeArgs, log)
+		services.Regist(serviceID, tunnelx.NewTunnelBridge(), tunnelBridgeArgs, log)
 	case "server":
-		services.Regist(serviceName, mux.NewMuxServerManager(), muxServerArgs, log)
+		services.Regist(serviceID, mux.NewMuxServerManager(), muxServerArgs, log)
 	case "client":
-		services.Regist(serviceName, mux.NewMuxClient(), muxClientArgs, log)
+		services.Regist(serviceID, mux.NewMuxClient(), muxClientArgs, log)
 	case "bridge":
-		services.Regist(serviceName, mux.NewMuxBridge(), muxBridgeArgs, log)
+		services.Regist(serviceID, mux.NewMuxBridge(), muxBridgeArgs, log)
 	case "socks":
-		services.Regist(serviceName, socksx.NewSocks(), socksArgs, log)
+		services.Regist(serviceID, socksx.NewSocks(), socksArgs, log)
 	case "sps":
-		services.Regist(serviceName, spsx.NewSPS(), spsArgs, log)
-	/*case "dns":
-		services.Regist(serviceName, sdk.NewDNS(), dnsArgs, log)*/
-	case "keygen":
-		services.Regist(serviceName, keygenx.NewKeygen(), keygenArgs, log)
+		services.Regist(serviceID, spsx.NewSPS(), spsArgs, log)
+	case "dns":
+		services.Regist(serviceID, NewDNS(), dnsArgs, log)
 	}
-	service, err = services.Run(serviceName, nil)
+	_, err = services.Run(serviceID, nil)
 	if err != nil {
-		log.Fatalf("run service [%s] fail, ERR:%s", serviceName, err)
+		return fmt.Sprintf("run service [%s:%s] fail, ERR:%s", serviceID, serviceName, err)
 	}
 	return
 }
 
-func poster() {
-	fmt.Printf(`Proxy Enterprise Version v%s`+" by snail , blog : http://www.host900.com/\n\n", APP_VERSION)
+func Stop(serviceID string) {
+	services.Stop(serviceID)
 }
-func saveProfiling() {
-	goroutine := pprof.Lookup("goroutine")
-	goroutine.WriteTo(goroutineProfilingFile, 1)
-	heap := pprof.Lookup("heap")
-	heap.WriteTo(memProfilingFile, 1)
-	block := pprof.Lookup("block")
-	block.WriteTo(blockProfilingFile, 1)
-	threadcreate := pprof.Lookup("threadcreate")
-	threadcreate.WriteTo(threadcreateProfilingFile, 1)
-	pprof.StopCPUProfile()
+
+func Version() string {
+	return SDK_VERSION
+}
+func StartProfiling(storePath string) {
+	profilingLock.Lock()
+	defer profilingLock.Unlock()
+	if !isProfiling {
+		isProfiling = true
+		if storePath == "" {
+			storePath = "."
+		}
+		cpuProfilingFile, _ = os.Create(filepath.Join(storePath, "cpu.prof"))
+		memProfilingFile, _ = os.Create(filepath.Join(storePath, "memory.prof"))
+		blockProfilingFile, _ = os.Create(filepath.Join(storePath, "block.prof"))
+		goroutineProfilingFile, _ = os.Create(filepath.Join(storePath, "goroutine.prof"))
+		threadcreateProfilingFile, _ = os.Create(filepath.Join(storePath, "threadcreate.prof"))
+		pprof.StartCPUProfile(cpuProfilingFile)
+	}
+}
+func StopProfiling() {
+	profilingLock.Lock()
+	defer profilingLock.Unlock()
+	if isProfiling {
+		isProfiling = false
+		pprof.StopCPUProfile()
+		goroutine := pprof.Lookup("goroutine")
+		goroutine.WriteTo(goroutineProfilingFile, 1)
+		heap := pprof.Lookup("heap")
+		heap.WriteTo(memProfilingFile, 1)
+		block := pprof.Lookup("block")
+		block.WriteTo(blockProfilingFile, 1)
+		threadcreate := pprof.Lookup("threadcreate")
+		threadcreate.WriteTo(threadcreateProfilingFile, 1)
+		//close
+		goroutineProfilingFile.Close()
+		memProfilingFile.Close()
+		blockProfilingFile.Close()
+		threadcreateProfilingFile.Close()
+	}
+
 }
