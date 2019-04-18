@@ -542,7 +542,7 @@ func initConfig() (err error) {
 }
 
 func poster() {
-	fmt.Printf("Proxy Version v%s\n", APP_VERSION)
+	fmt.Printf("X Proxy v%s\n", APP_VERSION)
 }
 func saveProfiling() {
 	goroutine := pprof.Lookup("goroutine")
